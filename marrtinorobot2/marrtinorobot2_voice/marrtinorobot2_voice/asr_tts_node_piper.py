@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2025 robotics-3d.com
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +16,6 @@
 # Author: Ferrarini Fabio
 # Email : ferrarini09@gmail.com
 # File  : asr_tts_node_piper.py
-#!/usr/bin/env python3
 
 import os
 import json
@@ -80,9 +80,9 @@ class PiperTTS:
 
         # Verifica dipendenze
         if subprocess.call(['which', 'piper'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-            raise RuntimeError("piper non � installato. Installa con: sudo apt-get install -y piper")
+            raise RuntimeError("piper non e' installato. Installa con: sudo apt-get install -y piper")
         if subprocess.call(['which', 'play'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-            raise RuntimeError("SoX non � installato. Installa con: sudo apt-get install -y sox")
+            raise RuntimeError("SoX non e' installato. Installa con: sudo apt-get install -y sox")
 
     def set_voice(self, voice_name: str) -> bool:
         v = (voice_name or "").strip().lower()
@@ -124,17 +124,14 @@ class PiperTTS:
             stderr=subprocess.PIPE,
             check=True,
         )
-        # Riproduzione
-        #subprocess.run(["play", wav_path, "--norm", "-q"], check=True)
+        # Riproduzione con lieve post processing
         subprocess.run([
             "play", wav_path, "--norm", "-q",
-            "pitch", "400",      # +400 cent ≈ +4 semitoni
-            "tempo", "1.08",     # leggermente più veloce senza cambiare pitch
-            "treble", "+3",      # più brillantezza
+            "pitch", "400",      # +400 cent ~ +4 semitoni
+            "tempo", "1.08",     # piu' veloce senza cambiare pitch
+            "treble", "+3",      # un po' di brillantezza
             "highpass", "120"    # taglia le sub-basse
         ], check=True)
-
-
 
 
 # ---------------------------
@@ -143,14 +140,13 @@ class PiperTTS:
 class ASRTTSNode(Node):
     def __init__(self):
         super().__init__('asr_tts_node')
-        self.get_logger().info("?? Avvio nodo ASR+TTS (piper)�")
+        self.get_logger().info("Avvio nodo ASR+TTS (piper)")
 
         # --- Config ---
         config_path = '/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/config/asr-tts.json'
-        #config_path =  '/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/marrtinorobot2_voice/config'
         cfg = self._load_config(config_path)
 
-        # Debug level (opzionale da config)
+        # Debug level
         self.debug = cfg.get("debug", True)
         try:
             if self.debug:
@@ -166,10 +162,10 @@ class ASRTTSNode(Node):
 
         # Lingua / messaggi
         self.language = cfg.get("language", "it")
-        self.work_offline = cfg.get("work_offline", True)  # compatibilit�
+        self.work_offline = cfg.get("work_offline", True)
         self.msg_start = cfg.get("msg_start", "Ciao, sono pronta!")
 
-        # Flag per normalizzazione (prima di _resolve_wake_words)
+        # Flag normalizzazione (prima di _resolve_wake_words)
         self.case_sensitive = cfg.get("case_sensitive", False)
         self.normalize_accents = cfg.get("normalize_accents", True)
         self.wake_match = cfg.get("wake_match", "prefix").lower()
@@ -183,7 +179,7 @@ class ASRTTSNode(Node):
         self.beep_ms = cfg.get("beep", {}).get("duration_ms", 180)
         self.beep_volume = cfg.get("beep", {}).get("volume", 0.2)
 
-        # Piper config (DEFAULT corretto)
+        # Piper config
         self.piper_models_dir = cfg.get(
             "piper_models_dir",
             "/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/models/piper"
@@ -193,7 +189,7 @@ class ASRTTSNode(Node):
         self.piper_noise_scale = cfg.get("piper_noise_scale", 0.667)
         self.piper_noise_w = cfg.get("piper_noise_w", 0.8)
 
-        # ====== LOG DI AVVIO (INFO): configurazione riga per riga ======
+        # ====== LOG DI AVVIO (INFO) ======
         self._log_config_start(config_path, cfg)
 
         # Microfono ReSpeaker
@@ -261,11 +257,11 @@ class ASRTTSNode(Node):
             device=self.input_device_index
         )
         self.stream.start()
-        self.get_logger().info("??? Microfono avviato")
+        self.get_logger().info("Microfono avviato")
 
         # Loop ascolto
         self.create_timer(0.1, self.listen_loop)
-        self.get_logger().info("?? Timer ascolto continuo avviato.")
+        self.get_logger().info("Timer ascolto continuo avviato.")
 
         # Saluto iniziale
         self.emotion("startblinking")
@@ -296,7 +292,6 @@ class ASRTTSNode(Node):
         self.get_logger().info(f"piper_noise_w: {self.piper_noise_w}")
         self.get_logger().info(f"debug: {self.debug}")
         self.get_logger().info("====================")
-        # Dump completo solo se debug=true
         if cfg.get("debug", False):
             self.get_logger().debug(f"[DEBUG] Config completa:\n{json.dumps(cfg, indent=2, ensure_ascii=False)}")
 
@@ -331,12 +326,12 @@ class ASRTTSNode(Node):
     # ----------------- Callbacks -----------------
     def language_callback(self, msg: String):
         self.language = msg.data
-        self.get_logger().info(f"?? Lingua impostata: {self.language}")
+        self.get_logger().info(f"Lingua impostata: {self.language}")
 
     def voice_callback(self, msg: String):
         requested = (msg.data or "").strip().lower()
         if self.piper.set_voice(requested):
-            self.get_logger().info(f"??? Voce piper cambiata in: {requested}")
+            self.get_logger().info(f"Voce piper cambiata in: {requested}")
         else:
             self.get_logger().warning("Voce non supportata. Usa 'paola' o 'riccardo'.")
 
@@ -405,36 +400,50 @@ class ASRTTSNode(Node):
                     raw_text = (result.get("text", "") or "").strip()
                     if not raw_text:
                         continue
-                    match_text = raw_text if self.case_sensitive else raw_text.lower()
+
+                    # Normalizza per cercare la wake-word
+                    norm = raw_text if self.case_sensitive else raw_text.lower()
                     if self.normalize_accents:
-                        match_text = unicodedata.normalize('NFD', match_text)
-                        match_text = ''.join(ch for ch in match_text if unicodedata.category(ch) != 'Mn')
-                    self.get_logger().info(f"?? Hai detto: {raw_text}")
-                    triggered, trig_word, remainder = self._check_wake(match_text, raw_text)
-                    if triggered:
+                        norm = unicodedata.normalize('NFD', norm)
+                        norm = ''.join(ch for ch in norm if unicodedata.category(ch) != 'Mn')
+
+                    # TAGLIA SEMPRE tutto prima della wake-word, ovunque essa sia
+                    found = False
+                    remainder = ""
+                    trig_word = ""
+                    for kw in self.wake_words:
+                        nkw = kw if self.case_sensitive else kw.lower()
+                        if self.normalize_accents:
+                            nkw = unicodedata.normalize('NFD', nkw)
+                            nkw = ''.join(ch for ch in nkw if unicodedata.category(ch) != 'Mn')
+                        idx = norm.find(nkw)
+                        if idx != -1:
+                            # prendi testo dopo la wake-word sull'originale
+                            start = idx + len(kw)
+                            remainder = raw_text[start:].lstrip()
+                            trig_word = kw
+                            found = True
+                            break
+
+                    self.get_logger().info(f"Hai detto: {raw_text}")
+
+                    if not found:
+                        # nessuna wake-word trovata: ignora
                         if self.debug:
-                            self.get_logger().debug(f"[DEBUG] Wake matched: '{trig_word}' | remainder='{remainder}'")
-                        self._beep()
-                        self.publish_asr(remainder if remainder else trig_word)
+                            self.get_logger().debug("[DEBUG] Nessuna wake-word trovata; scarto risultato.")
+                        continue
+
+                    if self.debug:
+                        self.get_logger().debug(f"[DEBUG] Wake matched: '{trig_word}' | remainder_raw='{remainder}'")
+
+                    self._beep()
+                    if remainder:
+                        # pubblica SOLO la parte dopo la wake-word
+                        self.publish_asr(remainder)
         except Exception as e:
             self.get_logger().error(f"Errore ascolto: {e}")
 
-    def _check_wake(self, match_text: str, raw_text_original: str):
-        if self.wake_match == "anywhere":
-            for kw in self.wake_words:
-                idx = match_text.find(kw)
-                if idx != -1:
-                    before = raw_text_original[:idx]
-                    after = raw_text_original[idx + len(kw):].lstrip()
-                    return True, kw, (before + after).strip()
-            return False, "", ""
-        else:  # prefix
-            for kw in self.wake_words:
-                if match_text.startswith(kw):
-                    remainder = raw_text_original[len(kw):].lstrip()
-                    return True, kw, remainder
-            return False, "", ""
-
+    # ----------------- Audio I/O -----------------
     def audio_callback(self, indata, frames, time, status):
         if status:
             self.get_logger().warning(str(status))
