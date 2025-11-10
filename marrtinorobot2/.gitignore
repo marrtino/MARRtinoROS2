@@ -1,4 +1,5 @@
 marrtinorobot2/marrtinorobot2_chatbot/myenv/*
 marrtinorobot2/marrtinorobot2_chatbot/models/*
+marrtinorobot2/marrtinorobot2_chatbot/models/piper/*
 marrtinorobot2/marrtinorobot2_chatbot/marrtinorobot2_chatbot/*.wav
 docker/.env
