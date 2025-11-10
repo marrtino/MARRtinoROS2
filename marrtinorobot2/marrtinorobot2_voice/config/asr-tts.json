@@ -5,7 +5,7 @@
   "language": "it",
   "work_offline": true,
   "msg_start": "Ciao, sono pronta!",
-  "wake_words": ["martino", "martina","marrtino"],
+  "wake_words": ["martino", "martina","marrtino","peppino","peppe"],
   "wake_match": "prefix",
   "case_sensitive": false,
   "normalize_accents": true,
@@ -17,7 +17,7 @@
   },
   "piper_models_dir": "/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/models/piper",
   "piper_default_voice": "paola",
-  "piper_length_scale": 1.50,
+  "piper_length_scale": 0.9,
   "piper_noise_scale": 0.60,
   "piper_noise_w": 0.45,
   "debug": true

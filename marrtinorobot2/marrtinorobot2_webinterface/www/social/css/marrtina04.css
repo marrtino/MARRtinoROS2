@@ -1,5 +1,5 @@
 :root {
-  --face-color: rgb(202, 194, 194);
+  --face-color:rgb(200 234 193); 
   --face-height: 100vh;
   --face-width: 100vw;
   --eye-size: 26.00vmin;
@@ -55,12 +55,12 @@ body {
 }
 
 .bulb.left {
-  left: 20%;
+  left: 3%;
   transform: rotate(-10deg); /* Ruota di 5 gradi */
 }
 
 .bulb.right {
-  right: 20%;
+  right: 10%;
   transform: rotate(10deg); /* Ruota di 5 gradi */
 }
 
@@ -108,7 +108,7 @@ body {
   height: var(--mouth-height);
   width: var(--mouth-width);
   bottom: 5%;
-  left: 40%;
+  left: 35%;
   z-index: 4;
   position: absolute;
 }

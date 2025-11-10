@@ -18,6 +18,7 @@
 # File  : asr_tts_node_piper.py
 
 import os
+import re
 import json
 import queue
 import subprocess
@@ -80,9 +81,9 @@ class PiperTTS:
 
         # Verifica dipendenze
         if subprocess.call(['which', 'piper'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-            raise RuntimeError("piper non e' installato. Installa con: sudo apt-get install -y piper")
+            raise RuntimeError("piper non e installato. Installa con: sudo apt-get install -y piper")
         if subprocess.call(['which', 'play'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
-            raise RuntimeError("SoX non e' installato. Installa con: sudo apt-get install -y sox")
+            raise RuntimeError("SoX non e installato. Installa con: sudo apt-get install -y sox")
 
     def set_voice(self, voice_name: str) -> bool:
         v = (voice_name or "").strip().lower()
@@ -124,12 +125,12 @@ class PiperTTS:
             stderr=subprocess.PIPE,
             check=True,
         )
-        # Riproduzione con lieve post processing
+        # Riproduzione con leggera post-EQ/tempo
         subprocess.run([
             "play", wav_path, "--norm", "-q",
-            "pitch", "400",      # +400 cent ~ +4 semitoni
-            "tempo", "1.08",     # piu' veloce senza cambiare pitch
-            "treble", "+3",      # un po' di brillantezza
+            "pitch", "400",      # +400 cent e +4 semitoni
+            "tempo", "0.9",     # pie veloce senza cambiare pitch
+            "treble", "+3",      # brillantezza
             "highpass", "120"    # taglia le sub-basse
         ], check=True)
 
@@ -139,12 +140,13 @@ class PiperTTS:
 # ---------------------------
 class ASRTTSNode(Node):
     def __init__(self):
-        super().__init__('asr_tts_node')
+        super().__init__('asr_tts_node_piper')
         self.get_logger().info("Avvio nodo ASR+TTS (piper)")
 
         # --- Config ---
         config_path = '/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/config/asr-tts.json'
         cfg = self._load_config(config_path)
+        config_dir = os.path.dirname(config_path)
 
         # Debug level
         self.debug = cfg.get("debug", True)
@@ -189,8 +191,15 @@ class ASRTTSNode(Node):
         self.piper_noise_scale = cfg.get("piper_noise_scale", 0.667)
         self.piper_noise_w = cfg.get("piper_noise_w", 0.8)
 
+        # NLP correzioni (da file JSON esterno in config/)
+        self.nlp_corrections = cfg.get("nlp_corrections", True)
+        vocab_filename = cfg.get("commands_vocab_file", "commands_vocab.it.json")
+        vocab_path = vocab_filename if os.path.isabs(vocab_filename) else os.path.join(config_dir, vocab_filename)
+        self.commands_vocab = self._load_commands_vocab(vocab_path)
+
         # ====== LOG DI AVVIO (INFO) ======
         self._log_config_start(config_path, cfg)
+        self.get_logger().info(f"commands_vocab_file: {vocab_path} (items={len(self.commands_vocab)})")
 
         # Microfono ReSpeaker
         device_list = sd.query_devices()
@@ -302,6 +311,29 @@ class ASRTTSNode(Node):
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
+    def _load_commands_vocab(self, path: str):
+        try:
+            if not os.path.exists(path):
+                self.get_logger().warning(f"[NLP] File vocabolario comandi non trovato: {path}")
+                return []
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                self.get_logger().warning(f"[NLP] Formato non valido in {path}: attesa una lista di oggetti")
+                return []
+            # sanity check elementi
+            cleaned = []
+            for it in data:
+                if isinstance(it, dict) and "phrase" in it:
+                    cleaned.append({
+                        "phrase": str(it["phrase"]),
+                        "intent": str(it.get("intent", it["phrase"]))
+                    })
+            return cleaned
+        except Exception as e:
+            self.get_logger().warning(f"[NLP] Impossibile caricare vocabolario {path}: {e}")
+            return []
+
     def _resolve_wake_words(self, cfg: dict):
         if "wake_words" in cfg and isinstance(cfg["wake_words"], list) and cfg["wake_words"]:
             words = [str(w) for w in cfg["wake_words"] if str(w).strip()]
@@ -315,6 +347,59 @@ class ASRTTSNode(Node):
                 nw = ''.join(ch for ch in nw if unicodedata.category(ch) != 'Mn')
             normed.append(nw)
         return normed
+
+    # ----------------- NLP helpers -----------------
+    def _levenshtein(self, a: str, b: str) -> int:
+        if a == b:
+            return 0
+        if len(a) == 0:
+            return len(b)
+        if len(b) == 0:
+            return len(a)
+        v0 = list(range(len(b) + 1))
+        v1 = [0] * (len(b) + 1)
+        for i in range(len(a)):
+            v1[0] = i + 1
+            for j in range(len(b)):
+                cost = 0 if a[i] == b[j] else 1
+                v1[j + 1] = min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost)
+            v0, v1 = v1, v0
+        return v0[len(b)]
+
+    def _norm_basic(self, text: str) -> str:
+        t = text.strip().lower()
+        if self.normalize_accents:
+            t = unicodedata.normalize('NFD', t)
+            t = ''.join(ch for ch in t if unicodedata.category(ch) != 'Mn')
+        t = re.sub(r"[^\w\s']", " ", t)
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    def _snap_to_vocab(self, text: str) -> str:
+        if not getattr(self, "nlp_corrections", True):
+            return text
+        vocab = getattr(self, "commands_vocab", [])
+        if not vocab:
+            return text
+        best = None
+        best_score = -1.0
+        for item in vocab:
+            phrase = item.get("phrase", "")
+            intent = item.get("intent", phrase)
+            if not phrase:
+                continue
+            dist = self._levenshtein(text, phrase)
+            maxlen = max(len(text), len(phrase), 1)
+            score = 1.0 - (dist / maxlen)  # 1 perfetto, 0 pessimo
+            if score > best_score:
+                best_score = score
+                best = intent
+        return best if best_score >= 0.72 else text  # soglia empirica
+
+    def _postprocess_text(self, text: str) -> str:
+        t = self._norm_basic(text)
+        t = self._snap_to_vocab(t)
+        return t
 
     # ----------------- Social helpers -----------------
     def gesture(self, msg: str):
@@ -401,13 +486,13 @@ class ASRTTSNode(Node):
                     if not raw_text:
                         continue
 
-                    # Normalizza per cercare la wake-word
+                    # normalizza per la ricerca wake
                     norm = raw_text if self.case_sensitive else raw_text.lower()
                     if self.normalize_accents:
                         norm = unicodedata.normalize('NFD', norm)
                         norm = ''.join(ch for ch in norm if unicodedata.category(ch) != 'Mn')
 
-                    # TAGLIA SEMPRE tutto prima della wake-word, ovunque essa sia
+                    # CERCA LA WAKE-WORD OVUNQUE (indipendente da wake_match)
                     found = False
                     remainder = ""
                     trig_word = ""
@@ -418,8 +503,7 @@ class ASRTTSNode(Node):
                             nkw = ''.join(ch for ch in nkw if unicodedata.category(ch) != 'Mn')
                         idx = norm.find(nkw)
                         if idx != -1:
-                            # prendi testo dopo la wake-word sull'originale
-                            start = idx + len(kw)
+                            start = idx + len(kw)  # taglia su raw_text dopo la wake-word
                             remainder = raw_text[start:].lstrip()
                             trig_word = kw
                             found = True
@@ -428,22 +512,59 @@ class ASRTTSNode(Node):
                     self.get_logger().info(f"Hai detto: {raw_text}")
 
                     if not found:
-                        # nessuna wake-word trovata: ignora
-                        if self.debug:
-                            self.get_logger().debug("[DEBUG] Nessuna wake-word trovata; scarto risultato.")
+                        # nessuna wake-word trovata -> non beep
                         continue
 
-                    if self.debug:
-                        self.get_logger().debug(f"[DEBUG] Wake matched: '{trig_word}' | remainder_raw='{remainder}'")
-
+                    # BEEP SEMPRE AL RILEVAMENTO
                     self._beep()
+
+                    # Se c'è del testo dopo la wake-word, pubblicalo (eventuale correzione NLP)
                     if remainder:
-                        # pubblica SOLO la parte dopo la wake-word
-                        self.publish_asr(remainder)
+                        corrected = self._postprocess_text(remainder)
+                        if self.debug and corrected != remainder:
+                            self.get_logger().debug(f"[DEBUG] NLP corrected -> '{corrected}' (from '{remainder}')")
+                        self.publish_asr(corrected)
+                        self.speak("o capito un attimo e ti rispondo")
+
+                # if self.recognizer.AcceptWaveform(data):
+                #     result = json.loads(self.recognizer.Result())
+                #     raw_text = (result.get("text", "") or "").strip()
+                #     if not raw_text:
+                #         continue
+                #     match_text = raw_text if self.case_sensitive else raw_text.lower()
+                #     if self.normalize_accents:
+                #         match_text = unicodedata.normalize('NFD', match_text)
+                #         match_text = ''.join(ch for ch in match_text if unicodedata.category(ch) != 'Mn')
+                #     self.get_logger().info(f"Hai detto: {raw_text}")
+                #     triggered, trig_word, remainder = self._check_wake(match_text, raw_text)
+                #     if triggered:
+                #         if self.debug:
+                #             self.get_logger().debug(f"[DEBUG] Wake matched: '{trig_word}' | remainder_raw='{remainder}'")
+                #         self._beep()
+                #         if remainder:
+                #             corrected = self._postprocess_text(remainder)
+                #             if self.debug and corrected != remainder:
+                #                 self.get_logger().debug(f"[DEBUG] NLP corrected -> '{corrected}' (from '{remainder}')")
+                #             self.publish_asr(corrected)
         except Exception as e:
             self.get_logger().error(f"Errore ascolto: {e}")
 
-    # ----------------- Audio I/O -----------------
+    def _check_wake(self, match_text: str, raw_text_original: str):
+        # anywhere: ignora qualsiasi cosa prima della wake-word, prendi solo il testo dopo
+        if self.wake_match == "anywhere":
+            for kw in self.wake_words:
+                idx = match_text.find(kw)
+                if idx != -1:
+                    after = raw_text_original[idx + len(kw):].lstrip()
+                    return True, kw, after.strip()
+            return False, "", ""
+        else:  # prefix
+            for kw in self.wake_words:
+                if match_text.startswith(kw):
+                    remainder = raw_text_original[len(kw):].lstrip()
+                    return True, kw, remainder
+            return False, "", ""
+
     def audio_callback(self, indata, frames, time, status):
         if status:
             self.get_logger().warning(str(status))

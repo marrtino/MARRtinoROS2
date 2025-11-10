@@ -112,24 +112,22 @@
         </div>
       </div>
 
-      <!-- <div class="col-md-3">
+       <div class="col-md-3">
         <div class="card mb-4 box-shadow">
           <script>
-            //  document.write("<a href='https://" + window.location.hostname + ":5000' target='_blank'>");
-            document.write("<a href='https://" + window.location.hostname + "'>");
-            document.write("<img class='card-img-top' src='images/webinterface.webp' alt='Web Interface'>");
+            document.write("<a href='http://" + window.location.hostname + ":5000' target='_blank'>");
+            document.write("<img class='card-img-top' src='images/eva.png' alt='E.V.A. Interface'>");
             document.write("</a>");
           </script>
           <div class="card-body">
             <div class="d-flex justify-content-center">
-              <script>
-                // document.write("<a class='btn btn-outline-danger' href='https://" + window.location.hostname + ":5000' target='_blank'>Web Interface</a>")
-                 document.write("<a class='btn btn-outline-danger' href='https://" + window.location.hostname + "' >Web Interface</a>");;
-              </script>
-            </div>
+               <script>
+                  document.write("<a class='btn btn-outline-danger' href='http://" + window.location.hostname + ":5000' target='_blank'>E.V.A. Interface</a>");
+               </script>
+                  </div>
           </div>
         </div>
-      </div> -->
+      </div>
 
       <div class="col-md-3">
         <div class="card mb-4 box-shadow">

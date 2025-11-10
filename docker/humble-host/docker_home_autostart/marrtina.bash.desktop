@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Exec=/home/ubuntu/src/marrtinorobot2/marrtina.bash
-Hidden=false
-Name[C]=Marrtina Start
-Name=Marrtina Start
-Comment[C]=
-Comment=
-X-MATE-Autostart-Delay=2

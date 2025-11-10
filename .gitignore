@@ -3,3 +3,4 @@ marrtinorobot2/marrtinorobot2_chatbot/myenv/*
 marrtinorobot2/marrtinorobot2_chatbot/models/*
 facestart.sh
 *.env
+marrtinorobot2/marrtinorobot2_voice/models/vosk-model-it-0.22/*
