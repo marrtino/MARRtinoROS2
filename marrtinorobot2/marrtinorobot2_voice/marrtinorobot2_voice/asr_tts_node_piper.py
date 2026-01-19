@@ -17,6 +17,14 @@
 # Email : ferrarini09@gmail.com
 # File  : asr_tts_node_piper.py
 
+#!/usr/bin/env python3
+# Copyright 2025 robotics-3d.com
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# Author: Ferrarini Fabio
+# Email : ferrarini09@gmail.com
+# File  : asr_tts_node_piper.py
+
 import os
 import re
 import json
@@ -27,6 +35,10 @@ import zipfile
 import unicodedata
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer
+
+import threading
+import time
+import random
 
 import rclpy
 from rclpy.node import Node
@@ -56,10 +68,10 @@ def download_vosk_model(model_url: str, models_root: str):
 
 
 # ---------------------------
-# Piper TTS wrapper
+# Piper TTS wrapper (SPLIT: synth vs play)
 # ---------------------------
 class PiperTTS:
-    """Wrapper per piper-tts via CLI."""
+    """Wrapper per piper-tts via CLI (sintesi WAV separata dal playback)."""
     SUPPORTED_VOICES = {
         "paola": "it_IT-paola-medium.onnx",
         "riccardo": "it_IT-riccardo-medium.onnx",
@@ -104,13 +116,69 @@ class PiperTTS:
             "noise_w": self.noise_w
         }
 
-    def speak(self, text: str, wav_path: str = "/tmp/robot_speech.wav"):
+    def _sanitize_tts_text(self, text: str) -> str:
+        """
+        Rimuove:
+          - markdown (** e *)
+          - emoji unicode (👋😊😜 ecc.)
+          - faccine ASCII comuni (:) ;-) :D ecc.)
+        così il TTS NON le pronuncia mai.
+        """
+        if not text:
+            return text
+
+        t = text.replace("**", "").replace("*", "")
+
+        # Rimuovi Variation Selector e ZWJ (emoji composte)
+        t = t.replace("\uFE0F", "").replace("\u200D", "")
+
+        # Rimuovi emoji unicode (range principali)
+        emoji_re = re.compile(
+            "["
+            "\U0001F1E0-\U0001F1FF"  # flags
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F680-\U0001F6FF"  # transport & map
+            "\U0001F700-\U0001F77F"
+            "\U0001F780-\U0001F7FF"
+            "\U0001F800-\U0001F8FF"
+            "\U0001F900-\U0001F9FF"  # supplemental symbols
+            "\U0001FA00-\U0001FA6F"
+            "\U0001FA70-\U0001FAFF"
+            "\u2600-\u26FF"          # misc symbols
+            "\u2700-\u27BF"          # dingbats
+            "]+",
+            flags=re.UNICODE
+        )
+        t = emoji_re.sub(" ", t)
+
+        # Skin tone modifiers (se rimangono)
+        t = re.sub(r"[\U0001F3FB-\U0001F3FF]", " ", t)
+
+        # Faccine ASCII comuni
+        ascii_emo_re = re.compile(
+            r"(:-\)|:\)|;-?\)|;-\)|:D|:-D|:P|:-P|;P|;-\w|:\(|:-\(|:o|:-o|<3)",
+            flags=re.IGNORECASE
+        )
+        t = ascii_emo_re.sub(" ", t)
+
+        # Normalizza spazi
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    def synthesize(self, text: str, wav_path: str):
+        """Genera il WAV (silenzioso: nessun audio)."""
         if not text:
             return
+
+        text = self._sanitize_tts_text(text)
+        if not text:
+            return
+
         model = self._model_path()
         if not os.path.exists(model):
             raise FileNotFoundError(f"Modello piper non trovato: {model}")
-        # Sintesi
+
         subprocess.run(
             [
                 "piper",
@@ -125,14 +193,23 @@ class PiperTTS:
             stderr=subprocess.PIPE,
             check=True,
         )
-        # Riproduzione con leggera post-EQ/tempo
-        subprocess.run([
-            "play", wav_path, "--norm", "-q",
-            "pitch", "400",      # +400 cent e +4 semitoni
-            "tempo", "0.9",     # pie veloce senza cambiare pitch
-            "treble", "+3",      # brillantezza
-            "highpass", "120"    # taglia le sub-basse
-        ], check=True)
+
+    def play_wav_async(self, wav_path: str) -> subprocess.Popen:
+        """Avvia il playback. Ritorna il processo (audio parte subito)."""
+        if not os.path.exists(wav_path):
+            raise FileNotFoundError(f"WAV non trovato: {wav_path}")
+
+        return subprocess.Popen(
+            [
+                "play", wav_path, "--norm", "-q",
+                "pitch", "400",
+                "tempo", "0.9",
+                "treble", "+3",
+                "highpass", "120"
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE
+        )
 
 
 # ---------------------------
@@ -144,7 +221,19 @@ class ASRTTSNode(Node):
         self.get_logger().info("Avvio nodo ASR+TTS (piper)")
 
         # --- Config ---
-        config_path = '/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/config/asr-tts.json'
+        base_cfg_dir = "/home/ubuntu/src/marrtinorobot2/marrtinorobot2_voice/config"
+        candidate_paths = [
+            os.path.join(base_cfg_dir, "asr_tts.json"),
+            os.path.join(base_cfg_dir, "asr-tts.json"),
+        ]
+        config_path = None
+        for p in candidate_paths:
+            if os.path.exists(p):
+                config_path = p
+                break
+        if config_path is None:
+            config_path = os.path.join(base_cfg_dir, "asr_tts.json")
+
         cfg = self._load_config(config_path)
         config_dir = os.path.dirname(config_path)
 
@@ -167,7 +256,22 @@ class ASRTTSNode(Node):
         self.work_offline = cfg.get("work_offline", True)
         self.msg_start = cfg.get("msg_start", "Ciao, sono pronta!")
 
-        # Flag normalizzazione (prima di _resolve_wake_words)
+        # Frase ACK configurabile
+        self.msg_ack = cfg.get("msg_ack", "Ho capito, un attimo e ti rispondo.")
+
+        # Delay prima dell'audio (ms)
+        try:
+            self.tts_pre_audio_delay_ms = int(cfg.get("tts_pre_audio_delay_ms", 0))
+        except Exception:
+            self.tts_pre_audio_delay_ms = 0
+
+        # Delay DOPO avvio audio e PRIMA di speak/gesture (ms)
+        try:
+            self.tts_anim_delay_ms = int(cfg.get("tts_anim_delay_ms", 0))
+        except Exception:
+            self.tts_anim_delay_ms = 0
+
+        # Normalizzazione wake
         self.case_sensitive = cfg.get("case_sensitive", False)
         self.normalize_accents = cfg.get("normalize_accents", True)
         self.wake_match = cfg.get("wake_match", "prefix").lower()
@@ -191,13 +295,56 @@ class ASRTTSNode(Node):
         self.piper_noise_scale = cfg.get("piper_noise_scale", 0.667)
         self.piper_noise_w = cfg.get("piper_noise_w", 0.8)
 
-        # NLP correzioni (da file JSON esterno in config/)
+        # NLP correzioni
         self.nlp_corrections = cfg.get("nlp_corrections", True)
         vocab_filename = cfg.get("commands_vocab_file", "commands_vocab.it.json")
         vocab_path = vocab_filename if os.path.isabs(vocab_filename) else os.path.join(config_dir, vocab_filename)
         self.commands_vocab = self._load_commands_vocab(vocab_path)
 
-        # ====== LOG DI AVVIO (INFO) ======
+        # Publisher / Subscriber
+        self.publisher_asr = self.create_publisher(String, '/ASR', 10)
+        self.subscription_lang = self.create_subscription(String, '/speech/language', self.language_callback, 10)
+        self.subscription_text = self.create_subscription(String, '/speech/to_speak', self.tts_callback, 10)
+        self.subscription_voice = self.create_subscription(String, '/speech/voice', self.voice_callback, 10)
+
+        # Social topics
+        self.TOPIC_emotion = "social/emotion"
+        self.TOPIC_gesture = "social/gesture"
+        self.emotion_pub = self.create_publisher(String, self.TOPIC_emotion, 10)
+        self.gesture_pub = self.create_publisher(String, self.TOPIC_gesture, 10)
+
+        # ---------------------------
+        # Emoji -> gesture mapping
+        # ---------------------------
+        eg = cfg.get("emoji_gestures", {})
+        self.emoji_gestures_enabled = bool(eg.get("enabled", True))
+        self.emoji_gestures_map = eg.get("map", {
+            "👋": "hello",
+            "😊": "happy",
+            "😜": "playful",
+            "🤔": "thinking",
+            "😮": "surprised",
+            "😅": "shrug"
+        })
+        try:
+            self.emoji_gestures_max = int(eg.get("max_per_text", 4))
+        except Exception:
+            self.emoji_gestures_max = 4
+
+        # ---------------------------
+        # TTS Gesture (braccia/testa mentre parla) - comandi verso node_gesture.py
+        # ---------------------------
+        tts_g = cfg.get("tts_gesture", {})
+        self.tts_gesture_enabled = tts_g.get("enabled", True)
+        self.tts_gesture_rate_hz = float(tts_g.get("rate_hz", 1.6))
+        self.tts_gesture_start_cmd = str(tts_g.get("start_cmd", "arms_talk_start"))
+        self.tts_gesture_stop_cmd = str(tts_g.get("stop_cmd", "arms_talk_stop"))
+        self.tts_gesture_commands = tts_g.get("commands", ["arms_talk_1", "arms_talk_2", "arms_talk_3"])
+
+        self._tts_gesture_stop_event = threading.Event()
+        self._tts_gesture_thread = None
+
+        # ====== LOG DI AVVIO ======
         self._log_config_start(config_path, cfg)
         self.get_logger().info(f"commands_vocab_file: {vocab_path} (items={len(self.commands_vocab)})")
 
@@ -220,18 +367,6 @@ class ASRTTSNode(Node):
         if not os.path.exists(expected_file):
             download_vosk_model(self.vosk_model_url, self.model_vosk_root)
         self.model_vosk = Model(self.vosk_model_dir)
-
-        # Publisher / Subscriber
-        self.publisher_asr = self.create_publisher(String, '/ASR', 10)
-        self.subscription_lang = self.create_subscription(String, '/speech/language', self.language_callback, 10)
-        self.subscription_text = self.create_subscription(String, '/speech/to_speak', self.tts_callback, 10)
-        self.subscription_voice = self.create_subscription(String, '/speech/voice', self.voice_callback, 10)
-
-        # Social topics
-        self.TOPIC_emotion = "social/emotion"
-        self.TOPIC_gesture = "social/gesture"
-        self.emotion_pub = self.create_publisher(String, self.TOPIC_emotion, 10)
-        self.gesture_pub = self.create_publisher(String, self.TOPIC_gesture, 10)
 
         # Stato
         self.listening = True
@@ -274,7 +409,6 @@ class ASRTTSNode(Node):
 
         # Saluto iniziale
         self.emotion("startblinking")
-        self.emotion("speak")
         self.speak(self.msg_start)
         self.emotion("normal")
 
@@ -294,11 +428,10 @@ class ASRTTSNode(Node):
         self.get_logger().info(f"beep.frequency: {self.beep_freq}")
         self.get_logger().info(f"beep.duration_ms: {self.beep_ms}")
         self.get_logger().info(f"beep.volume: {self.beep_volume}")
-        self.get_logger().info(f"piper_models_dir: {self.piper_models_dir}")
-        self.get_logger().info(f"piper_default_voice: {self.piper_default_voice}")
-        self.get_logger().info(f"piper_length_scale: {self.piper_length_scale}")
-        self.get_logger().info(f"piper_noise_scale: {self.piper_noise_scale}")
-        self.get_logger().info(f"piper_noise_w: {self.piper_noise_w}")
+        self.get_logger().info(f"msg_ack: {self.msg_ack}")
+        self.get_logger().info(f"tts_pre_audio_delay_ms: {self.tts_pre_audio_delay_ms}")
+        self.get_logger().info(f"tts_anim_delay_ms: {self.tts_anim_delay_ms}")
+        self.get_logger().info(f"emoji_gestures.enabled: {getattr(self, 'emoji_gestures_enabled', False)}")
         self.get_logger().info(f"debug: {self.debug}")
         self.get_logger().info("====================")
         if cfg.get("debug", False):
@@ -321,7 +454,6 @@ class ASRTTSNode(Node):
             if not isinstance(data, list):
                 self.get_logger().warning(f"[NLP] Formato non valido in {path}: attesa una lista di oggetti")
                 return []
-            # sanity check elementi
             cleaned = []
             for it in data:
                 if isinstance(it, dict) and "phrase" in it:
@@ -390,11 +522,11 @@ class ASRTTSNode(Node):
                 continue
             dist = self._levenshtein(text, phrase)
             maxlen = max(len(text), len(phrase), 1)
-            score = 1.0 - (dist / maxlen)  # 1 perfetto, 0 pessimo
+            score = 1.0 - (dist / maxlen)
             if score > best_score:
                 best_score = score
                 best = intent
-        return best if best_score >= 0.72 else text  # soglia empirica
+        return best if best_score >= 0.72 else text
 
     def _postprocess_text(self, text: str) -> str:
         t = self._norm_basic(text)
@@ -407,6 +539,87 @@ class ASRTTSNode(Node):
 
     def emotion(self, msg: str):
         self.emotion_pub.publish(String(data=msg))
+
+    # ---------------------------
+    # Emoji -> gesture (colleziona in ordine di apparizione)
+    # ---------------------------
+    def _collect_emoji_gestures(self, raw_text: str):
+        if not getattr(self, "emoji_gestures_enabled", False):
+            return []
+        if not raw_text:
+            return []
+
+        mp = getattr(self, "emoji_gestures_map", {}) or {}
+        maxn = max(0, int(getattr(self, "emoji_gestures_max", 0)))
+
+        found = []
+        for ch in raw_text:
+            if ch in mp:
+                g = mp.get(ch)
+                if g and g not in found:
+                    found.append(g)
+                    if maxn > 0 and len(found) >= maxn:
+                        break
+
+        # Supporto anche per token multi-char (se un giorno li aggiungi)
+        # senza perdere compatibilità
+        if maxn == 0 or len(found) < maxn:
+            for tok, g in mp.items():
+                if not tok or len(tok) == 1:
+                    continue
+                if tok in raw_text and g and g not in found:
+                    found.append(g)
+                    if maxn > 0 and len(found) >= maxn:
+                        break
+
+        return found
+
+    # ---------------------------
+    # Gestures durante TTS (thread)
+    # ---------------------------
+    def _start_tts_gestures(self):
+        if not getattr(self, "tts_gesture_enabled", False):
+            return
+
+        self._stop_tts_gestures()
+        self._tts_gesture_stop_event.clear()
+
+        if getattr(self, "tts_gesture_start_cmd", ""):
+            self.gesture(self.tts_gesture_start_cmd)
+
+        def _loop():
+            hz = max(0.2, float(getattr(self, "tts_gesture_rate_hz", 1.6)))
+            interval = 1.0 / hz
+            cmds = [str(c) for c in (getattr(self, "tts_gesture_commands", []) or []) if str(c).strip()]
+            if not cmds:
+                cmds = ["arms_talk_1", "arms_talk_2", "arms_talk_3"]
+
+            while not self._tts_gesture_stop_event.is_set():
+                try:
+                    self.gesture(random.choice(cmds))
+                except Exception:
+                    pass
+                time.sleep(interval)
+
+        self._tts_gesture_thread = threading.Thread(target=_loop, daemon=True)
+        self._tts_gesture_thread.start()
+
+    def _stop_tts_gestures(self):
+        if not hasattr(self, "_tts_gesture_stop_event"):
+            return
+
+        self._tts_gesture_stop_event.set()
+        thr = getattr(self, "_tts_gesture_thread", None)
+        if thr and thr.is_alive():
+            thr.join(timeout=0.5)
+
+        if getattr(self, "tts_gesture_stop_cmd", ""):
+            try:
+                self.gesture(self.tts_gesture_stop_cmd)
+            except Exception:
+                pass
+
+        self._tts_gesture_thread = None
 
     # ----------------- Callbacks -----------------
     def language_callback(self, msg: String):
@@ -443,35 +656,96 @@ class ASRTTSNode(Node):
         self._speak_common(text)
 
     def _speak_common(self, text: str):
+        """
+        PIPELINE:
+          1) synth WAV (silenzio)  -> (emoji tolti dal testo dentro Piper)
+          2) delay pre-audio (silenzio)
+          3) avvia play (audio parte)
+          4) delay anim (opzionale)
+          5) emotion('speak') + talk gestures + emoji gestures
+          6) attende fine audio
+          7) stop gesture + emotion('normal')
+        """
         if not text:
             return
+
+        # Gestures da emoji: le calcolo sul testo RAW (prima che venga “ripulito”)
+        emoji_gestures = self._collect_emoji_gestures(text)
+
         self.tts_busy = True
         self.listening = False
+
         try:
             self.stream.stop()
             with self.queue.mutex:
                 self.queue.queue.clear()
         except Exception:
             pass
+
+        wav_path = "/tmp/robot_speech.wav"
+        play_proc = None
+
         try:
             if self.debug:
                 p = self.piper.get_params()
                 self.get_logger().debug(
-                    f"[DEBUG] Piper speak -> voice={p['voice']} | model={p['model_path']} | "
-                    f"length_scale={p['length_scale']} | noise_scale={p['noise_scale']} | "
-                    f"noise_w={p['noise_w']} | text_len={len(text)}"
+                    f"[DEBUG] Piper synth -> voice={p['voice']} | model={p['model_path']} | len(raw)={len(text)}"
                 )
+
+            # 1) SINTESI (silenzio) - qui gli emoji vengono rimossi dal testo
+            self.piper.synthesize(text, wav_path)
+
+            # 2) Delay prima dell'audio
+            pre_ms = max(0, int(getattr(self, "tts_pre_audio_delay_ms", 0)))
+            if pre_ms > 0:
+                time.sleep(pre_ms / 1000.0)
+
+            # 3) Avvia audio (NON bloccante)
+            play_proc = self.piper.play_wav_async(wav_path)
+
+            # 4) Delay dopo avvio audio e prima di bocca/gesti
+            anim_ms = max(0, int(getattr(self, "tts_anim_delay_ms", 0)))
+            if anim_ms > 0:
+                time.sleep(anim_ms / 1000.0)
+
+            # 5) Ora posso far “parlare” la faccia e muovere braccia/testa
             self.emotion("speak")
-            self.piper.speak(text, "/tmp/robot_speech.wav")
+            self._start_tts_gestures()
+
+            # gesture da emoji (una-tantum)
+            for g in emoji_gestures:
+                self.gesture(g)
+
+            if self.debug:
+                self.get_logger().debug("[DEBUG] Playback running; speak+gestures ON")
+
+            # 6) Attendi fine audio
+            _, err = play_proc.communicate()
+            if play_proc.returncode not in (0, None):
+                try:
+                    e = (err or b"").decode("utf-8", errors="ignore").strip()
+                except Exception:
+                    e = ""
+                self.get_logger().error(f"Playback error (rc={play_proc.returncode}) {e}")
+
         except Exception as e:
             self.get_logger().error(f"Errore TTS (piper): {e}")
-        try:
-            self.stream.start()
-        except Exception:
-            pass
-        self.emotion("normal")
-        self.tts_busy = False
-        self.listening = True
+
+        finally:
+            try:
+                self._stop_tts_gestures()
+            except Exception:
+                pass
+
+            self.emotion("normal")
+
+            try:
+                self.stream.start()
+            except Exception:
+                pass
+
+            self.tts_busy = False
+            self.listening = True
 
     # ----------------- ASCOLTO -----------------
     def listen_loop(self):
@@ -492,10 +766,9 @@ class ASRTTSNode(Node):
                         norm = unicodedata.normalize('NFD', norm)
                         norm = ''.join(ch for ch in norm if unicodedata.category(ch) != 'Mn')
 
-                    # CERCA LA WAKE-WORD OVUNQUE (indipendente da wake_match)
+                    # CERCA LA WAKE-WORD OVUNQUE
                     found = False
                     remainder = ""
-                    trig_word = ""
                     for kw in self.wake_words:
                         nkw = kw if self.case_sensitive else kw.lower()
                         if self.normalize_accents:
@@ -503,69 +776,31 @@ class ASRTTSNode(Node):
                             nkw = ''.join(ch for ch in nkw if unicodedata.category(ch) != 'Mn')
                         idx = norm.find(nkw)
                         if idx != -1:
-                            start = idx + len(kw)  # taglia su raw_text dopo la wake-word
+                            start = idx + len(kw)
                             remainder = raw_text[start:].lstrip()
-                            trig_word = kw
                             found = True
                             break
 
                     self.get_logger().info(f"Hai detto: {raw_text}")
 
                     if not found:
-                        # nessuna wake-word trovata -> non beep
                         continue
 
-                    # BEEP SEMPRE AL RILEVAMENTO
                     self._beep()
 
-                    # Se c'è del testo dopo la wake-word, pubblicalo (eventuale correzione NLP)
                     if remainder:
                         corrected = self._postprocess_text(remainder)
                         if self.debug and corrected != remainder:
                             self.get_logger().debug(f"[DEBUG] NLP corrected -> '{corrected}' (from '{remainder}')")
                         self.publish_asr(corrected)
-                        self.speak("o capito un attimo e ti rispondo")
 
-                # if self.recognizer.AcceptWaveform(data):
-                #     result = json.loads(self.recognizer.Result())
-                #     raw_text = (result.get("text", "") or "").strip()
-                #     if not raw_text:
-                #         continue
-                #     match_text = raw_text if self.case_sensitive else raw_text.lower()
-                #     if self.normalize_accents:
-                #         match_text = unicodedata.normalize('NFD', match_text)
-                #         match_text = ''.join(ch for ch in match_text if unicodedata.category(ch) != 'Mn')
-                #     self.get_logger().info(f"Hai detto: {raw_text}")
-                #     triggered, trig_word, remainder = self._check_wake(match_text, raw_text)
-                #     if triggered:
-                #         if self.debug:
-                #             self.get_logger().debug(f"[DEBUG] Wake matched: '{trig_word}' | remainder_raw='{remainder}'")
-                #         self._beep()
-                #         if remainder:
-                #             corrected = self._postprocess_text(remainder)
-                #             if self.debug and corrected != remainder:
-                #                 self.get_logger().debug(f"[DEBUG] NLP corrected -> '{corrected}' (from '{remainder}')")
-                #             self.publish_asr(corrected)
+                        # Frase ACK configurabile
+                        self.speak(self.msg_ack)
+
         except Exception as e:
             self.get_logger().error(f"Errore ascolto: {e}")
 
-    def _check_wake(self, match_text: str, raw_text_original: str):
-        # anywhere: ignora qualsiasi cosa prima della wake-word, prendi solo il testo dopo
-        if self.wake_match == "anywhere":
-            for kw in self.wake_words:
-                idx = match_text.find(kw)
-                if idx != -1:
-                    after = raw_text_original[idx + len(kw):].lstrip()
-                    return True, kw, after.strip()
-            return False, "", ""
-        else:  # prefix
-            for kw in self.wake_words:
-                if match_text.startswith(kw):
-                    remainder = raw_text_original[len(kw):].lstrip()
-                    return True, kw, remainder
-            return False, "", ""
-
-    def audio_callback(self, indata, frames, time, status):
+    def audio_callback(self, indata, frames, time_info, status):
         if status:
             self.get_logger().warning(str(status))
         self.queue.put(bytes(indata))
@@ -578,9 +813,15 @@ class ASRTTSNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ASRTTSNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    finally:
+        try:
+            node._stop_tts_gestures()
+        except Exception:
+            pass
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

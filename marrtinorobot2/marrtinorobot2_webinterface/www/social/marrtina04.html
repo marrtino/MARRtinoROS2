@@ -1,171 +1,415 @@
-<!--
- # Copyright 2025 robotics-3d.com
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# Author: Ferrarini Fabio
-# Email : ferrarini09@gmail.com
-# -->
 <!DOCTYPE html>
-<html lang="en">
-
+<html lang="it">
 <head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>MARRtina Robot Face</title>
-  <script type="text/javascript" src="js/roslib.min.js"></script>
-  <script type="text/javascript" src="js/eventemitter2.min.js"></script>
-  <script type="text/javascript" type="text/javascript">
-    function refreshPage(t){
 
-      setTimeout("location.reload(true);", t);
+  <!-- Dipendenze locali (come nel tuo progetto) -->
+  <script src="js/eventemitter2.min.js"></script>
+  <script src="js/roslib.min.js"></script>
 
-    }
-    </script>
-  <script type="text/javascript" type="text/javascript">
-    var teleop;
-    var ros = new ROSLIB.Ros({
-      	 url: 'ws:' + window.location.hostname +':9090'
-    });
-
-    ros.on('connection', function () {
-        console.log("Connected");
-    });
-
-    ros.on('error', function (error) {
-        console.log("Error");
-    });
-
-    ros.on('close', function () {
-       console.log("Close");
-    });
-    //
-
-	// SONAR
-	var sonar0_listener = new ROSLIB.Topic({
-      ros: ros,
-      name: '/social/emotion',
-      messageType: 'std_msgs/String'
-  });
-
-  sonar0_listener.subscribe(function (m) {
-      //document.getElementById("emotion").innerHTML = m.data;
-      console.log("Emotion");
-      console.log(m.data);
-
-	  if (m.data == "normal") {
-        eyes.normal();
-      }
-      if (m.data == "happy") {
-        eyes.happy();
-      }
-	  if (m.data == "surprise") {
-        eyes.surprise();
-      }
-	  if (m.data == "angry") {
-        eyes.angry();
-      }
-	  if (m.data == "sad") {
-        eyes.sad();
-      }
-      if (m.data == "speak") {
-        eyes.speak();
-      }
-	  if (m.data == "sings") {
-        eyes.sings();
-      }
-      if (m.data == "fear") {
-        eyes.fear();
-      }
-      if (m.data == "startblinking") {
-        eyes.startBlinking();
-      }
-      if (m.data == "stopblinking") {
-        eyes.stopBlinking();
-      }
-   });
-
-
-    window.onload = function () {
-
-
+  <style>
+    :root {
+      --face-color: rgb(200 234 193);
+      --face-height: 100vh;
+      --face-width: 100vw;
+      --eye-size: 26.00vmin;
+      --bulb-size: 25.33vmin;
+      --eye-color: white;
+      --eyelid-color: rgb(197, 190, 190);
+      --mouth-color: black;
+      --mouth-width: 20vw;
+      --mouth-height: 20vh;
+      --nose-color: black;
+      --nose-width: 24vw;
+      --nose-height: 15vh;
     }
 
-  </script>
+    * { box-sizing: border-box; }
+    body { background-color: white; margin: 0; }
 
-  <link rel="stylesheet" href="css/marrtina04.css">
-  <script type="text/javascript">
+    .face {
+      /* lo sfondo vero � l'SVG animato inserito come primo figlio */
+      background: transparent;
+      margin: auto;
+      height: var(--face-height);
+      width: var(--face-width);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* layer SVG dello sfondo IA */
+    .ai-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .face div { position: absolute; }
+
+    .eyebrow { height: 10vmin; width: 50vmin; }
+    .eyebrow.left { left: 1%; top: 10%; }
+    .eyebrow.right { right: 5%; top: 10%; }
+
+    .bulb {
+      height: calc(var(--bulb-size) * 0.5);
+      width: var(--bulb-size);
+      top: 12%;
+      position: relative;
+    }
+    .bulb.left { left: 5%; transform: rotate(-10deg); }
+    .bulb.right { right: 15%; transform: rotate(10deg); }
+
+    .eye {
+      position: relative;
+      border-radius: 50%;
+      height: var(--eye-size);
+      width: var(--eye-size);
+      top: 10%;
+      z-index: 1; /* occhio sotto la pupilla */
+    }
+
+    .pupil {
+      position: absolute;
+      top: 55%;
+      left: 30%;
+      transform: translate(-50%, -50%);
+      z-index: 2; /* pupilla sopra l'occhio */
+      width: 70%;
+      height: 90%;
+      border-radius: 50%;
+      transition: transform 0.5s ease; /* movimento fluido */
+    }
+
+    .eyelid {
+      position: absolute;
+      height: var(--eye-size);
+      width: calc(var(--eye-size) * 1.75);
+      background-color: var(--eyelid-color);
+      z-index: 2;
+      border-radius: 50%;
+    }
+    .eyelid.upper { top: 0; left: calc(var(--eye-size) * -0.375); }
+    .eyelid.lower { bottom: 0; left: calc(var(--eye-size) * -0.375); }
+
+    .mouth {
+      height: var(--mouth-height);
+      width: var(--mouth-width);
+      bottom: 5%;
+      left: 35%;
+      z-index: 4;
+      position: absolute;
+    }
+
+    .nose {
+      height: var(--nose-height);
+      width: var(--nose-width);
+      bottom: 25%;
+      left: calc(var(--face-width) / 2 - var(--nose-width) / 2);
+      z-index: 4;
+      position: absolute;
+    }
+
+    /* Velo colorato sopra lo sfondo (opzionale) */
+    .face::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(120% 120% at 50% 40%, rgba(0,174,255,0.12), rgba(0,0,0,0) 60%);
+      z-index: 1; /* resta sotto a occhi/bocca ma sopra lo sfondo */
+      pointer-events: none;
+    }
+
+    /* Stile pulsanti (se li riattivi) */
+    button {
+      background-color: #333; color: white; border: none; padding: 5px 10px;
+      margin: 3px; font-size: 12px; cursor: pointer; border-radius: 2px;
+    }
+    button:hover { background-color: #555; }
+  </style>
+
+  <script>
+    // Ricarica pagina (forzata)
+    function refreshPage(t){ setTimeout(function(){ location.reload(true); }, t); }
+
+    // =========================
+    // ROS AUTO-RECONNECT + AUTO-REFRESH
+    // =========================
+    const ROSBRIDGE_PORT = 9090;
+
+    // Se la pagina � servita in https, usa wss (altrimenti il browser blocca ws per mixed-content)
+    const WS_PROTO = (window.location.protocol === 'https:') ? 'wss' : 'ws';
+    const ROS_URL = WS_PROTO + '://' + window.location.hostname + ':' + ROSBRIDGE_PORT;
+
+    // tuning
+    const RECONNECT_BASE_MS = 800;        // primo retry
+    const RECONNECT_MAX_MS  = 8000;       // max backoff
+    const RELOAD_IF_DOWN_MS = 12000;      // se resta gi� per 12s -> refresh
+    const MAX_RELOADS_PER_SESSION = 8;    // anti-loop (per sessione browser)
+
+    let ros = null;
+    let isConnected = false;
+
+    let reconnectAttempt = 0;
+    let reconnectTimer = null;
+    let downSince = null;
+    let watchdogTimer = null;
+
+    // per evitare duplicati di subscribe
+    let emotionListener = null;
+    let emotionSubscribed = false;
+
+    function log(...a){ console.log('[FACE ROS]', ...a); }
+
+    function clearReconnectTimer(){
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+
+    function startWatchdog(){
+      stopWatchdog();
+      watchdogTimer = setInterval(() => {
+        if (isConnected) return;
+
+        if (downSince === null) downSince = Date.now();
+        const downFor = Date.now() - downSince;
+
+        if (downFor >= RELOAD_IF_DOWN_MS) {
+          const key = 'face_ros_reload_count';
+          const n = parseInt(sessionStorage.getItem(key) || '0', 10);
+          if (n < MAX_RELOADS_PER_SESSION) {
+            sessionStorage.setItem(key, String(n + 1));
+            log('ROS down too long -> reloading page (count=', n + 1, ')');
+            refreshPage(200);
+          } else {
+            log('Reload limit reached, stop reloading to avoid infinite loop.');
+            stopWatchdog();
+          }
+        }
+      }, 1000);
+    }
+
+    function stopWatchdog(){
+      if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+    }
+
+    function subscribeEmotionTopic(){
+      if (!ros) return;
+      if (emotionSubscribed) return;
+
+      emotionListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/social/emotion',
+        messageType: 'std_msgs/String'
+      });
+
+      emotionListener.subscribe(function (m) {
+        console.log('Emotion:', m && m.data);
+        if (!m || !m.data || typeof eyes === 'undefined') return;
+
+        switch (m.data) {
+          case 'normal':        eyes.normal(); break;
+          case 'happy':         eyes.happy(); break;
+          case 'surprise':      eyes.surprise(); break;
+          case 'angry':         eyes.angry(); break;
+          case 'sad':           eyes.sad(); break;
+          case 'speak':         eyes.speak(); break;
+          case 'sings':         eyes.sings(); break;
+          case 'fear':          eyes.fear(); break;
+          case 'startblinking': eyes.startBlinking(); break;
+          case 'stopblinking':  eyes.stopBlinking(); break;
+          default: break;
+        }
+      });
+
+      emotionSubscribed = true;
+      log('Subscribed to /social/emotion');
+    }
+
+    function unsubscribeEmotionTopic(){
+      try {
+        if (emotionListener) emotionListener.unsubscribe();
+      } catch(e) {}
+      emotionListener = null;
+      emotionSubscribed = false;
+    }
+
+    function scheduleReconnect(reason){
+      clearReconnectTimer();
+
+      reconnectAttempt += 1;
+      const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(2, reconnectAttempt - 1));
+      log('Scheduling reconnect in', backoff, 'ms', 'reason=', reason || '');
+
+      reconnectTimer = setTimeout(() => {
+        connectROS();
+      }, backoff);
+    }
+
+    function connectROS(){
+      clearReconnectTimer();
+
+      // se esiste gi�, prova a chiuderla
+      try { if (ros) ros.close(); } catch(e) {}
+
+      ros = new ROSLIB.Ros({ url: ROS_URL });
+
+      ros.on('connection', function () {
+        log('ROS Connected ->', ROS_URL);
+        isConnected = true;
+        reconnectAttempt = 0;
+        downSince = null;
+        subscribeEmotionTopic();
+      });
+
+      ros.on('error', function (e) {
+        log('ROS Error', e);
+        isConnected = false;
+        if (downSince === null) downSince = Date.now();
+        unsubscribeEmotionTopic();
+        scheduleReconnect('error');
+      });
+
+      ros.on('close', function () {
+        log('ROS Close');
+        isConnected = false;
+        if (downSince === null) downSince = Date.now();
+        unsubscribeEmotionTopic();
+        scheduleReconnect('close');
+      });
+
+      // watchdog (refresh se resta gi�)
+      startWatchdog();
+    }
+
+    // =========================
+    // Movimento casuale pupille
+    // =========================
     function movePupilsRandomly() {
-      // Seleziona le pupille
-      const leftPupil = document.getElementById("pupsx");
-      const rightPupil = document.getElementById("pupdx");
+      const leftPupil  = document.getElementById('pupsx');
+      const rightPupil = document.getElementById('pupdx');
+      if (!leftPupil || !rightPupil) return;
 
       setInterval(() => {
-        // Genera spostamenti casuali (range: ±20%)
-        const randomX = Math.random() * 40 - 20; // Da -20% a +20%
-        const randomY = Math.random() * 40 - 20; // Da -20% a +20%
-
-        // Trasforma i valori casuali in una trasformazione comune
-        const transformValue = `translate(${randomX}%, ${randomY}%)`;
-
-        // Applica la stessa trasformazione a entrambe le pupille
-        leftPupil.style.transform = transformValue;
+        const randomX = 60 + Math.random() * 40 - 20;
+        const randomY = 60 + Math.random() * 40 - 20;
+        const transformValue = `translate(-50%, -50%) translate(${randomX}%, ${randomY}%)`;
+        leftPupil.style.transform  = transformValue;
         rightPupil.style.transform = transformValue;
-      }, 1500); // Cambia posizione ogni 500ms
+      }, 1500);
     }
+
+    window.onload = function () {
+      movePupilsRandomly();
+      connectROS(); // connessione automatica all'avvio + auto-reconnect + auto-refresh
+    };
   </script>
 </head>
 
-<body onload="movePupilsRandomly();">
-   <!-- <div class="buttons">
+<body>
+  <div class="buttons">
+    <!--
     <button onclick="eyes.startBlinking()">Start Blink</button>
     <button onclick="eyes.stopBlinking()">Stop</button>
- 	<button onclick="eyes.normal()" >Nor</button>
-	<button onclick="eyes.speak()" >Speak</button>
-    <button onclick="eyes.happy()" >Happy</button>
-    <button onclick="eyes.sad()" >Sad</button>
-    <button onclick="eyes.fear()" >Fear</button>
-    <button onclick="eyes.angry()" >Mad</button>
-    <button onclick="eyes.focused()" >Foc</button>
-	 <button onclick="eyes.surprise()" >sur</button>
-    <button onclick="eyes.confused()" >Conf</button>
+    <button onclick="eyes.normal()">Nor</button>
+    <button onclick="eyes.speak()">Speak</button>
+    <button onclick="eyes.happy()">Happy</button>
+    <button onclick="eyes.sad()">Sad</button>
+    <button onclick="eyes.fear()">Fear</button>
+    <button onclick="eyes.angry()">Mad</button>
+    <button onclick="eyes.focused()">Foc</button>
+    <button onclick="eyes.surprise()">Sur</button>
+    <button onclick="eyes.confused()">Conf</button>
+    -->
+  </div>
 
-  </div> -->
   <div class="face">
-    <!-- <div class="eyebrow left">
-      <img id="soprdx" src="image/eyebrowsx1.gif" width="80%">
-    </div> -->
+     <div class="eyebrow left"><img id="soprdx" src="image/eyebrowsx1.gif" width="80%"></div>
+    <!-- SFONDO IA ANIMATO -->
+    <div class="ai-bg" aria-hidden="true">
+      <svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" width="100%" height="100%">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#001633"/>
+            <stop offset="50%" stop-color="#003c8f"/>
+            <stop offset="100%" stop-color="#00b7ff"/>
+          </linearGradient>
+
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+
+          <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+            <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+          </pattern>
+
+          <style>
+            @keyframes dash { to { stroke-dashoffset: -2000; } }
+            @keyframes float { 0%{transform:translate(0,0)} 50%{transform:translate(20px,-15px)} 100%{transform:translate(0,0)} }
+            @keyframes pulse { 0%,100%{ r:4px; opacity:.6 } 50%{ r:8px; opacity:1 } }
+            @media (prefers-reduced-motion: reduce) {
+              .dash, .float, .pulse { animation: none !important; }
+            }
+          </style>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#bg)"/>
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+
+        <g filter="url(#glow)" opacity="0.9" class="float" style="animation: float 12s ease-in-out infinite;">
+          <g class="dash" style="stroke-dasharray: 12 18; stroke-dashoffset: 0; animation: dash 20s linear infinite;">
+            <path d="M200,200 C500,100 800,300 1100,220 S1600,320 1820,180" stroke="#00ffd5" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <path d="M100,800 C400,700 700,900 1000,780 S1500,880 1850,760" stroke="#6a5cff" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <path d="M120,450 C420,380 720,520 1020,460 S1500,540 1880,420" stroke="#44d9ff" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </g>
+
+          <g fill="#00ffd5">
+            <circle class="pulse" cx="420" cy="360" r="6" style="animation: pulse 3.8s ease-in-out infinite;"/>
+            <circle class="pulse" cx="720" cy="500" r="6" style="animation: pulse 2.9s ease-in-out .4s infinite;"/>
+            <circle class="pulse" cx="1040" cy="440" r="6" style="animation: pulse 3.3s ease-in-out .2s infinite;"/>
+            <circle class="pulse" cx="1320" cy="520" r="6" style="animation: pulse 3.1s ease-in-out .1s infinite;"/>
+            <circle class="pulse" cx="1560" cy="460" r="6" style="animation: pulse 3.6s ease-in-out .5s infinite;"/>
+          </g>
+        </g>
+
+        <radialGradient id="vign" cx="50%" cy="50%" r="70%">
+          <stop offset="60%" stop-color="rgba(0,0,0,0)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0.35)"/>
+        </radialGradient>
+        <rect width="100%" height="100%" fill="url(#vign)"/>
+      </svg>
+    </div>
+
+    <!-- CONTENUTO DELLA FACCIA -->
     <div class="bulb left">
-      <img id="occhiosx" src="image/face04/BulbSx.png" width="140%">
+      
+      <img id="occhiosx" src="image/face04/BulbSx.png" width="140%" alt="Bulbo sinistro" />
       <div class="eye left">
-        <img id="pupsx" src="image/face04/Pupilla.png" class="pupil">
+        <img id="pupsx" src="image/face04/Pupilla.png" class="pupil" alt="Pupilla sinistra" />
       </div>
     </div>
-    <!-- <div class="eyebrow right">
-      <img id="soprsx" src="image/eyebrowdx1.gif" width="80%">
-    </div> -->
+
     <div class="bulb right">
-      <img id="occhiodx" src="image/face04/BulbDx.png" width="140%">
+      <img id="occhiodx" src="image/face04/BulbDx.png" width="140%" alt="Bulbo destro" />
       <div class="eye right">
-        <img id="pupdx" src="image/face04/Pupilla.png" class="pupil">
+        <img id="pupdx" src="image/face04/Pupilla.png" class="pupil" alt="Pupilla destra" />
       </div>
     </div>
-    <!-- <div class="nose">
-      <img id="naso" src="image/face04/nosetalkmarrtina3.gif" width="100%">
-    </div> -->
+    <div class="nose">
+      <img id="naso" src="image/nosetalkmarrtina1.gif" width="100%">
+    </div>
+
     <div class="mouth">
-      <img id="bocca" src="image/face04/boccastabile.png" width="160%">
+      <img id="bocca" src="image/face04/boccastabile.png" width="160%" alt="Bocca" />
     </div>
   </div>
-  <script  src="js/marrtina04.js"></script>
-</body>
 
+  <!-- Script della faccia (definisce `eyes.*`) -->
+  <script src="js/marrtina04.js"></script>
+</body>
 </html>

@@ -80,13 +80,14 @@ if [ $? != 0 ]; then
   tmux send-keys -t $SESSION:8 "cd ~/marrtinorobot2_ws" C-m
   tmux send-keys -t $SESSION:8 "./webvideoserver.sh " C-m  # Log output to cmdexe.lo
 
-  tmux send-keys -t $SESSION:9 "cd ~/src/marrtinorobot2/marrtinorobot2_visio/marrtinorobot2_vision" C-m
-  tmux send-keys -t $SESSION:9 "python3 face_tracker_controller.py " C-m  # Log output to cmdexe.lo
+  tmux send-keys -t $SESSION:9 "cd ~/src/marrtinorobot2/marrtinorobot2_webinterface/marrtinorobot2_webinterface" C-m
+  tmux send-keys -t $SESSION:9 "python3 node_gesture.py " C-m  # Log output to cmdexe.lo
 
 
-  tmux send-keys -t $SESSION:109 "cd " C-m
+  tmux send-keys -t $SESSION:10 "cd " C-m
   tmux send-keys -t $SESSION:10 "while true; do play -n synth whitenoise vol 0.0001; done " C-m  # Log output to cmdexe.lo
   
+
   #tmux send-keys -t $SESSION:10 "cd ~/src/marrtinorobot2/marrtinorobot2_voice/marrtinorobot2_voice" C-m
   #tmux send-keys -t $SESSION:10 "python3 asr_chatbot_bridge.py " C-m  # L9og output to cmdexe.lo
 

@@ -62,6 +62,7 @@ except Exception as e:
 # === Config Chatbot / Endpoint =======================
 # =====================================================
 # Ora i comandi arrivano come <CODE> ... </CODE>
+CMD_PREFIX = "#@#"
 CODE_OPEN = "<CODE>"
 CODE_CLOSE = "</CODE>"
 APP_OLLAMA_URL = os.environ.get("APP_OLLAMA_URL", "http://127.0.0.1:5000/json")
@@ -259,10 +260,87 @@ class ChatbotBridgeNode(Node):
                 self._tts_queue.put("Eseguo codice.")
             return
 
-     
+        if answer.startswith(CMD_PREFIX):
+            cmd_text = answer[len(CMD_PREFIX):].strip()
+            self._process_robot_command(cmd_text)
 
         # 3) Testo normale -> TTS
         self._tts_queue.put(answer)
+
+    # =================================================
+    # === Comandi robot ===============================
+    # =================================================
+    def _enqueue_robot(self, fn, *args, **kwargs):
+        self._robot_queue.put((fn, args, kwargs))
+
+    def _process_robot_command(self, cmd_text: str):
+        if self.robot is None:
+            self._tts_queue.put("Comando non eseguibile (robot non disponibile).")
+            return
+
+        raw = (cmd_text or "").strip()
+        if not raw:
+            self._tts_queue.put("Nessun comando.")
+            return
+        raw = re.sub(r"^\s*(esegui\s+comando|esegui|comando)\s+", "", raw, flags=re.I)
+        tokens = raw.split()
+        verb = tokens[0].lower() if tokens else ""
+        rest = tokens[1:] if len(tokens) > 1 else []
+
+        try:
+            if verb in ("avanti", "forward", "fwd"):
+                dist = self._parse_float_arg(rest, 0.3)
+                self._enqueue_robot(self.robot.forward, dist)
+                self._tts_queue.put(f"Vado avanti {dist:.2f} metri.")
+                return
+            if verb in ("indietro", "back", "retro"):
+                dist = self._parse_float_arg(rest, 0.3)
+                self._enqueue_robot(self.robot.backward, dist)
+                self._tts_queue.put(f"Vado indietro {dist:.2f} metri.")
+                return
+            if verb in ("sinistra", "left", "sx"):
+                ang = self._parse_float_arg(rest, 30)
+                self._enqueue_robot(self.robot.left, ang)
+                self._tts_queue.put(f"Ruoto a sinistra {int(ang)} gradi.")
+                return
+            if verb in ("destra", "right", "dx"):
+                ang = self._parse_float_arg(rest, 30)
+                self._enqueue_robot(self.robot.right, ang)
+                self._tts_queue.put(f"Ruoto a destra {int(ang)} gradi.")
+                return
+            if verb in ("stop", "halt", "ferma", "fermo"):
+                self._enqueue_robot(self.robot.stop)
+                self._tts_queue.put("Fermo.")
+                return
+            if verb == "gesture":
+                msg = " ".join(rest) if rest else "wave"
+                self._enqueue_robot(self.robot.gesture, msg)
+                self._tts_queue.put(f"Eseguo gesto {msg}")
+                return
+            if verb in ("emotion", "sorridi"):
+                msg = " ".join(rest) if rest else "happy"
+                self._enqueue_robot(self.robot.emotion, msg)
+                self._tts_queue.put(f"Imposto emozione {msg}")
+                return
+            if verb == "pan":
+                val = self._parse_float_arg(rest, 0.0)
+                self._enqueue_robot(self.robot.pan, val)
+                self._tts_queue.put(f"Pan a {int(val)} gradi.")
+                return
+            if verb == "tilt":
+                val = self._parse_float_arg(rest, 0.0)
+                self._enqueue_robot(self.robot.tilt, val)
+                self._tts_queue.put(f"Tilt a {int(val)} gradi.")
+                return
+            if verb == "getimage":
+                self._enqueue_robot(self.robot.getImage)
+                self._tts_queue.put("Acquisisco immagine.")
+                return
+            self._tts_queue.put("Comando sconosciuto.")
+        except Exception as e:
+            self.get_logger().error(f"Errore eseguendo comando '{raw}': {e}")
+            self._tts_queue.put("Errore eseguendo il comando.")
+
 
     # =================================================
     # === Esecutore codice integrato ==================
