@@ -282,7 +282,7 @@ RUN pip3 install  vosk sounddevice requests
 RUN apt-get update && apt-get install -y \
     python3-dev portaudio19-dev libportaudio2 libportaudiocpp0 ffmpeg libavdevice-dev espeak-ng alsa-utils sox 
 
-RUN pip3 install sounddevice soundfile piper-tts
+RUN pip3 install sounddevice soundfile piper-tts pathvalidate
 
 # Assicura compatibilità di numpy
 RUN pip uninstall numpy -y && pip install numpy==1.26.4
